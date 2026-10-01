@@ -11,6 +11,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+// Import ScreenCaptureKit for macOS 13+
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
+#endif
+
 static volatile BOOL gATOEnabled = NO;
 static volatile BOOL gQuit = NO;
 static id gMonitor = nil;
@@ -47,9 +52,38 @@ static void applyGear(Gear gear) {
     }
 }
 
+static CGImageRef screenshotWithSCK(void) {
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000
+    @autoreleasepool {
+        NSError *error = nil;
+        SCDisplay *display = [SCShareableContent excludingDesktopWindows:NO executionQueue:dispatch_get_main_queue()].displays.firstObject;
+        if (!display) return NULL;
+        
+        SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+        config.sourceResolution = YES;
+        
+        SCScreenshotContentFilter *scFilter = [[SCScreenshotContentFilter alloc] initWithDisplay:display];
+        
+        CGImageRef __block result = NULL;
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        
+        [SCScreenshotManager captureImageWithContentFilter:scFilter
+                                             configuration:config
+                                          completionHandler:^(CGImageRef image, NSError *error) {
+            if (image) result = CGImageRetain(image);
+            dispatch_semaphore_signal(sem);
+        }];
+        
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        return result;
+    }
+#else
+    return NULL;
+#endif
+}
+
 static CGImageRef screenshot(void) {
-    return CGWindowListCreateImage(CGRectNull, kCGWindowListOptionOnScreenOnly,
-                                   kCGNullWindowID, kCGWindowImageDefault);
+    return screenshotWithSCK();
 }
 
 static NSString *ocr(CGImageRef image) {
